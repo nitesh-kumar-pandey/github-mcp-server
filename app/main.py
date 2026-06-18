@@ -116,7 +116,7 @@ async def log_requests(request: Request, call_next):
 
 @api.middleware("http")
 async def mcp_auth_middleware(request: Request, call_next):
-    if request.url.path.startswith("/mcp"):
+    if request.url.path == "/mcp" or request.url.path.startswith("/mcp/"):
         try:
             verify_mcp_key(request)
         except Exception as exc:

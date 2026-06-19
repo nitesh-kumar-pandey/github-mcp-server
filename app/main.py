@@ -213,7 +213,16 @@ def root(request: Request):
 def health():
     return {"status": "ok", "version": settings.mcp_server_version}
 
+from sqlalchemy import inspect
+from app.database import engine
 
+@api.get("/tables")
+def tables():
+    inspector = inspect(engine)
+    return {
+        "tables": inspector.get_table_names()
+    }
+    
 @api.get("/mcp-info")
 def mcp_info():
     return {

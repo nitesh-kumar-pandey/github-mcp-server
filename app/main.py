@@ -1,3 +1,15 @@
+"""
+main.py — Application entry point.
+
+Fixes applied:
+- Problem 1: the two identically-named `mcp_auth_middleware` functions are
+  renamed (`jwt_context_middleware` and `mcp_key_middleware`) so the second
+  no longer silently overwrites the first.
+- Problem 2: mcp_key_middleware now accepts JWT sessions, personal API keys,
+  AND the shared MCP_API_KEY, instead of only the shared key (which rejected
+  every JWT request).
+"""
+
 from __future__ import annotations
 
 import sys
@@ -13,11 +25,9 @@ from loguru import logger
 
 from app.config import get_settings
 from app.database import create_tables
-from app.auth import router as auth_router, verify_mcp_key
+from app.auth import router as auth_router, verify_mcp_request
 from app.tools import mcp
-
-from app.user_context import set_current_login
-from app.security import decode_jwt
+from app.user_context import set_current_login, clear_current_login
 
 settings = get_settings()
 
@@ -39,13 +49,10 @@ logger.add(
 limiter = Limiter(key_func=get_remote_address)
 
 # ---------------------------------------------------------------------------
-# MCP APP FIRST (IMPORTANT)
+# MCP APP FIRST (IMPORTANT — lifespan must be wired into FastAPI below)
 # ---------------------------------------------------------------------------
 
-mcp_app = mcp.http_app(
-    path="/",
-    transport="streamable-http",
-)
+mcp_app = mcp.http_app(path="/", transport="streamable-http")
 
 # ---------------------------------------------------------------------------
 # FastAPI app
@@ -59,16 +66,15 @@ api = FastAPI(
 A production-ready MCP server exposing GitHub operations as AI-callable tools.
 
 ### Connecting Claude
-1. Authenticate via `/auth/login`
-2. Use MCP endpoint: `<your-domain>/mcp`
-3. Pass `Authorization: Bearer <key>` if enabled
+1. Authenticate via `/auth/login` (GitHub OAuth), or
+2. Generate a personal API key via `POST /auth/api-keys` and use it directly
+3. Use MCP endpoint: `<your-domain>/mcp`
+4. Pass `Authorization: Bearer <session-token-or-api-key>`
     """,
     version=settings.mcp_server_version,
     docs_url="/docs",
     redoc_url="/redoc",
-
-    # FIX FOR MCP 1.27+
-    lifespan=mcp_app.lifespan,
+    lifespan=mcp_app.lifespan,  # required for MCP 1.27+
 )
 
 # ---------------------------------------------------------------------------
@@ -76,10 +82,7 @@ A production-ready MCP server exposing GitHub operations as AI-callable tools.
 # ---------------------------------------------------------------------------
 
 api.state.limiter = limiter
-api.add_exception_handler(
-    RateLimitExceeded,
-    _rate_limit_exceeded_handler
-)
+api.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # ---------------------------------------------------------------------------
 # CORS
@@ -98,37 +101,44 @@ api.add_middleware(
 # ---------------------------------------------------------------------------
 
 @api.middleware("http")
-async def mcp_auth_middleware(request: Request, call_next):
+async def log_requests(request: Request, call_next):
+    start = time.time()
+    response = await call_next(request)
+    elapsed = round((time.time() - start) * 1000, 1)
+    logger.info(
+        f"{request.method} {request.url.path} -> {response.status_code} ({elapsed}ms)"
+    )
+    return response
 
-    if request.url.path.startswith("/mcp"):
-
-        auth = request.headers.get("Authorization", "")
-
-        if auth.startswith("Bearer "):
-            jwt_token = auth.replace("Bearer ", "")
-            login = decode_jwt(jwt_token)
-
-            if login:
-                set_current_login(login)
-
-    return await call_next(request)
 
 # ---------------------------------------------------------------------------
-# MCP API KEY AUTH
+# MCP authentication + user-context middleware  (Problem 1 + Problem 2 fix)
+#
+# Single middleware, single pass, no duplicate function names. Resolves the
+# login from JWT session OR personal API key OR shared MCP_API_KEY, then sets
+# the request-scoped contextvar so tools can call resolve_token() without an
+# explicit `login` argument: API_KEY -> GitHub Login -> tool execution.
 # ---------------------------------------------------------------------------
 
 @api.middleware("http")
-async def mcp_auth_middleware(request: Request, call_next):
+async def mcp_key_middleware(request: Request, call_next):
     if request.url.path == "/mcp" or request.url.path.startswith("/mcp/"):
         try:
-            verify_mcp_key(request)
+            login = verify_mcp_request(request)  # raises HTTPException(401) if invalid
         except Exception as exc:
-            return JSONResponse(
-                status_code=401,
-                content={"detail": str(exc)}
-            )
+            status = getattr(exc, "status_code", 401)
+            detail = getattr(exc, "detail", str(exc))
+            return JSONResponse(status_code=status, content={"detail": detail})
+
+        set_current_login(login)  # may be None if only the shared key was used
+        try:
+            response = await call_next(request)
+        finally:
+            clear_current_login()
+        return response
 
     return await call_next(request)
+
 
 # ---------------------------------------------------------------------------
 # Routers
@@ -150,30 +160,27 @@ api.mount("/mcp", mcp_app)
 def on_startup():
     create_tables()
 
-    db_type = (
-        "PostgreSQL"
-        if settings.database_url.startswith("postgres")
-        else "SQLite"
-    )
+    db_type = "PostgreSQL" if settings.database_url.startswith("postgres") else "SQLite"
+    logger.info(f"GitHub MCP Server v{settings.mcp_server_version} — {db_type} — tables ready")
 
-    logger.info(
-        f"✅ GitHub MCP Server v{settings.mcp_server_version} "
-        f"— {db_type} — tables ready"
-    )
+    if not settings.encryption_key:
+        logger.warning(
+            "ENCRYPTION_KEY is NOT set. Token storage will fail until it is configured. "
+            'Generate one: python -c "from cryptography.fernet import Fernet; '
+            'print(Fernet.generate_key().decode())"'
+        )
+    else:
+        logger.info("Token encryption: enabled")
 
-    logger.info(
-        f"🔐 Token encryption: "
-        f"{'enabled' if settings.encryption_key else 'disabled'}"
-    )
+    if not settings.jwt_secret_key or settings.jwt_secret_key == "change-me-jwt-secret":
+        logger.warning(
+            "JWT_SECRET_KEY is using the insecure default. Set a real secret in production. "
+            'Generate one: python -c "import secrets; print(secrets.token_urlsafe(64))"'
+        )
 
-    logger.info(
-        f"🔑 MCP API key auth: "
-        f"{'enabled' if settings.mcp_api_key else 'disabled'}"
-    )
+    logger.info(f"MCP API key auth: {'enabled' if settings.mcp_api_key else 'disabled (per-user auth only)'}")
+    logger.info(f"CORS origins: {settings.get_cors_origins()}")
 
-    logger.info(
-        f"🌐 CORS origins: {settings.get_cors_origins()}"
-    )
 
 # ---------------------------------------------------------------------------
 # Health
@@ -194,10 +201,7 @@ def root(request: Request):
 
 @api.get("/health")
 def health():
-    return {
-        "status": "ok",
-        "version": settings.mcp_server_version
-    }
+    return {"status": "ok", "version": settings.mcp_server_version}
 
 
 @api.get("/mcp-info")
@@ -207,7 +211,8 @@ def mcp_info():
         "version": settings.mcp_server_version,
         "transport": "streamable-http",
         "endpoint": "/mcp",
-        "auth_required": bool(settings.mcp_api_key),
+        "auth_required": True,
+        "auth_methods": ["jwt_session", "personal_api_key", "shared_mcp_api_key"],
     }
 
 
@@ -216,24 +221,12 @@ async def list_tools():
     """List all registered MCP tools."""
     try:
         registered_tools = await mcp.list_tools()
-
-        tools = []
-
-        for tool in registered_tools:
-            if hasattr(tool, "name"):
-                tools.append(tool.name)
-            else:
-                tools.append(str(tool))
-
-        return {
-            "count": len(tools),
-            "tools": tools
-        }
-
+        tools = [getattr(t, "name", str(t)) for t in registered_tools]
+        return {"count": len(tools), "tools": tools}
     except Exception as e:
-        return {
-            "error": str(e)
-        }
+        return {"error": str(e)}
+
+
 # ---------------------------------------------------------------------------
 # Entry points
 # ---------------------------------------------------------------------------

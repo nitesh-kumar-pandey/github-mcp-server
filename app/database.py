@@ -16,14 +16,23 @@ settings = get_settings()
 # Engine — PostgreSQL in production, SQLite for local dev
 # ---------------------------------------------------------------------------
 _connect_args = {}
+_pool_kwargs = {}
 if settings.database_url.startswith("sqlite"):
     _connect_args = {"check_same_thread": False}
+else:
+    # Problem 8: proper PostgreSQL pool settings for Render
+    _pool_kwargs = {
+        "pool_size": 10,
+        "max_overflow": 20,
+        "pool_recycle": 300,
+    }
 
 engine = create_engine(
     settings.database_url,
     connect_args=_connect_args,
     echo=(settings.app_env == "development"),
     pool_pre_ping=True,  # handles stale connections (important for PG)
+    **_pool_kwargs,
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -71,6 +80,21 @@ class UserSession(Base):
     session_token = Column(String(512), unique=True, nullable=False)
     expires_at = Column(DateTime, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    revoked = Column(Boolean, default=False)
+
+
+class ApiKey(Base):
+    """Per-user API keys: API_KEY -> GitHub login mapping."""
+
+    __tablename__ = "api_keys"
+
+    id = Column(Integer, primary_key=True, index=True)
+    key_hash = Column(String(128), unique=True, nullable=False, index=True)
+    key_prefix = Column(String(16), nullable=False)  # shown to user for identification, e.g. "umk_ab12"
+    github_login = Column(String(255), nullable=False, index=True)
+    name = Column(String(255), default="")            # optional label, e.g. "laptop", "ci"
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_used_at = Column(DateTime, nullable=True)
     revoked = Column(Boolean, default=False)
 
 
@@ -154,6 +178,71 @@ def consume_oauth_state(db: Session, state: str) -> bool:
 def cleanup_expired_states(db: Session) -> None:
     db.query(OAuthState).filter(OAuthState.expires_at < datetime.utcnow()).delete()
     db.flush()
+
+
+# --- User sessions (DB-backed, Problem 3) ---
+
+def save_session(db: Session, login: str, token: str, expires_at: datetime) -> UserSession:
+    record = UserSession(github_login=login, session_token=token, expires_at=expires_at)
+    db.add(record)
+    db.flush()
+    return record
+
+
+def validate_session(db: Session, token: str) -> str | None:
+    """Return the login for a valid, non-revoked, non-expired session token — else None. (Problem 4)"""
+    session = db.query(UserSession).filter_by(session_token=token, revoked=False).first()
+    if not session:
+        return None
+    if session.expires_at < datetime.utcnow():
+        return None
+    return session.github_login
+
+
+def revoke_session(db: Session, token: str) -> bool:
+    session = db.query(UserSession).filter_by(session_token=token).first()
+    if not session:
+        return False
+    session.revoked = True
+    db.flush()
+    return True
+
+
+# --- API keys (per-user API_KEY -> GitHub login) ---
+
+def create_api_key(db: Session, key_hash: str, key_prefix: str, login: str, name: str = "") -> ApiKey:
+    record = ApiKey(key_hash=key_hash, key_prefix=key_prefix, github_login=login, name=name)
+    db.add(record)
+    db.flush()
+    return record
+
+
+def resolve_api_key(db: Session, key_hash: str) -> str | None:
+    """Return the GitHub login for a valid, non-revoked API key hash — else None."""
+    record = db.query(ApiKey).filter_by(key_hash=key_hash, revoked=False).first()
+    if not record:
+        return None
+    record.last_used_at = datetime.utcnow()
+    db.flush()
+    return record.github_login
+
+
+def list_api_keys(db: Session, login: str) -> list[ApiKey]:
+    return (
+        db.query(ApiKey)
+        .filter_by(github_login=login, revoked=False)
+        .order_by(ApiKey.created_at.desc())
+        .all()
+    )
+
+
+def revoke_api_key(db: Session, login: str, key_id: int) -> bool:
+    record = db.query(ApiKey).filter_by(id=key_id, github_login=login).first()
+    if not record:
+        return False
+    record.revoked = True
+    db.flush()
+    return True
 
 
 # --- Audit log ---

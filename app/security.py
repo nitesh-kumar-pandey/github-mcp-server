@@ -30,23 +30,27 @@ def _get_fernet() -> Fernet | None:
 
 
 def encrypt_token(plaintext: str) -> str:
-    """Encrypt a GitHub access token. Falls back to plaintext if no key set."""
+    """Encrypt a GitHub access token. Raises if ENCRYPTION_KEY is not configured —
+    production must never silently store raw GitHub tokens. (Problem 6)"""
     f = _get_fernet()
     if f is None:
-        return plaintext
+        raise RuntimeError(
+            "ENCRYPTION_KEY not configured. Set it before storing GitHub tokens — "
+            "generate one with: python -c \"from cryptography.fernet import Fernet; "
+            "print(Fernet.generate_key().decode())\""
+        )
     return f.encrypt(plaintext.encode()).decode()
 
 
 def decrypt_token(ciphertext: str) -> str:
-    """Decrypt a stored token. Falls back to returning as-is if no key set."""
+    """Decrypt a stored token. Raises if ENCRYPTION_KEY is not configured. (Problem 6)"""
     f = _get_fernet()
     if f is None:
-        return ciphertext
+        raise RuntimeError("ENCRYPTION_KEY not configured. Cannot decrypt stored tokens.")
     try:
         return f.decrypt(ciphertext.encode()).decode()
     except InvalidToken:
-        # Could be a plaintext token stored before encryption was enabled
-        return ciphertext
+        raise RuntimeError("Stored token could not be decrypted — ENCRYPTION_KEY may have changed.")
 
 
 # ---------------------------------------------------------------------------
@@ -71,3 +75,31 @@ def decode_jwt(token: str) -> Optional[str]:
         return payload.get("sub")
     except JWTError:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Per-user API keys (API_KEY -> GitHub login)
+# ---------------------------------------------------------------------------
+
+import hashlib
+import secrets as _secrets
+
+API_KEY_PREFIX = "umk_"  # "user mcp key"
+
+
+def generate_api_key() -> tuple[str, str, str]:
+    """Generate a new API key.
+
+    Returns (full_key, key_hash, key_prefix_for_display).
+    Only key_hash is stored in the DB — the full_key is shown once and never persisted.
+    """
+    raw = _secrets.token_urlsafe(32)
+    full_key = f"{API_KEY_PREFIX}{raw}"
+    key_hash = hash_api_key(full_key)
+    display_prefix = full_key[:12]  # e.g. "umk_aB3dEfG1" for identification
+    return full_key, key_hash, display_prefix
+
+
+def hash_api_key(full_key: str) -> str:
+    """SHA-256 hash of an API key for DB storage/lookup (keys are not reversible, unlike JWTs)."""
+    return hashlib.sha256(full_key.encode()).hexdigest()

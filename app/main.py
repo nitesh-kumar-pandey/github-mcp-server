@@ -178,6 +178,16 @@ def on_startup():
 # ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
+from app.database import create_tables
+
+@api.get("/create-tables")
+def create_tables_endpoint():
+    create_tables()
+    return {"status": "tables created"}
+
+
+
+
 from sqlalchemy import text
 from app.database import engine
 

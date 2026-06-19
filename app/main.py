@@ -158,34 +158,44 @@ api.mount("/mcp", mcp_app)
 
 @api.on_event("startup")
 def on_startup():
-    create_tables()
+    try:
+        create_tables()
+        logger.info("DATABASE TABLES CREATED")
+    except Exception as e:
+        logger.exception(f"DATABASE ERROR: {e}")
+        raise
 
-    db_type = "PostgreSQL" if settings.database_url.startswith("postgres") else "SQLite"
-    logger.info(f"GitHub MCP Server v{settings.mcp_server_version} — {db_type} — tables ready")
+    db_type = (
+        "PostgreSQL"
+        if settings.database_url.startswith("postgres")
+        else "SQLite"
+    )
 
-    if not settings.encryption_key:
-        logger.warning(
-            "ENCRYPTION_KEY is NOT set. Token storage will fail until it is configured. "
-            'Generate one: python -c "from cryptography.fernet import Fernet; '
-            'print(Fernet.generate_key().decode())"'
-        )
-    else:
-        logger.info("Token encryption: enabled")
-
-    if not settings.jwt_secret_key or settings.jwt_secret_key == "change-me-jwt-secret":
-        logger.warning(
-            "JWT_SECRET_KEY is using the insecure default. Set a real secret in production. "
-            'Generate one: python -c "import secrets; print(secrets.token_urlsafe(64))"'
-        )
-
-    logger.info(f"MCP API key auth: {'enabled' if settings.mcp_api_key else 'disabled (per-user auth only)'}")
-    logger.info(f"CORS origins: {settings.get_cors_origins()}")
-
+    logger.info(
+        f"GitHub MCP Server v{settings.mcp_server_version} — {db_type}"
+    )
 
 # ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
+from sqlalchemy import text
+from app.database import engine
 
+
+@api.get("/db-test")
+def db_test():
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT 1"))
+            return {
+                "database": "connected",
+                "result": result.scalar()
+            }
+    except Exception as e:
+        return {
+            "database": "failed",
+            "error": str(e)
+        }
 @api.get("/")
 @limiter.limit("60/minute")
 def root(request: Request):

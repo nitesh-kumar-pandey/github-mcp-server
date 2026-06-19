@@ -641,6 +641,13 @@ def list_discussions(repo: str, login: Optional[str] = None) -> str:
 # ---------------------------------------------------------------------------
 # Auth / User Tools
 # ---------------------------------------------------------------------------
+@mcp.tool()
+def debug_user():
+    from app.user_context import get_current_login
+
+    return {
+        "login": get_current_login()
+    }
 
 @mcp.tool()
 def whoami(login: Optional[str] = None) -> str:

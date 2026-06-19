@@ -16,6 +16,9 @@ from app.database import create_tables
 from app.auth import router as auth_router, verify_mcp_key
 from app.tools import mcp
 
+from app.user_context import set_current_login
+from app.security import decode_jwt
+
 settings = get_settings()
 
 # ---------------------------------------------------------------------------
@@ -95,20 +98,20 @@ api.add_middleware(
 # ---------------------------------------------------------------------------
 
 @api.middleware("http")
-async def log_requests(request: Request, call_next):
-    start = time.time()
+async def mcp_auth_middleware(request: Request, call_next):
 
-    response = await call_next(request)
+    if request.url.path.startswith("/mcp"):
 
-    elapsed = round((time.time() - start) * 1000, 1)
+        auth = request.headers.get("Authorization", "")
 
-    logger.info(
-        f"{request.method} {request.url.path} → "
-        f"{response.status_code} ({elapsed}ms) | "
-        f"ip={request.client.host if request.client else 'unknown'}"
-    )
+        if auth.startswith("Bearer "):
+            jwt_token = auth.replace("Bearer ", "")
+            login = decode_jwt(jwt_token)
 
-    return response
+            if login:
+                set_current_login(login)
+
+    return await call_next(request)
 
 # ---------------------------------------------------------------------------
 # MCP API KEY AUTH

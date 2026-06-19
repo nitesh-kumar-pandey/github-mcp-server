@@ -18,6 +18,7 @@ from app.database import (
     get_db, upsert_token, get_encrypted_token,
     store_oauth_state, consume_oauth_state, cleanup_expired_states,
 )
+from app.user_context import get_current_login
 from app.security import encrypt_token, decrypt_token, create_jwt, decode_jwt
 from app.github import get_authenticated_user
 
@@ -170,23 +171,20 @@ def logout():
 # Token resolution helper (used by tools.py)
 # ---------------------------------------------------------------------------
 
-def resolve_token(login: str | None = None) -> str:
-    """
-    Resolve the best available token:
-    1. DB-stored OAuth token for the given login (decrypts on fetch).
-    2. GITHUB_TOKEN env var (PAT).
-    Raises RuntimeError if neither is available.
-    """
-    if login:
-        with get_db() as db:
-            enc = get_encrypted_token(db, login)
-        if enc:
-            return decrypt_token(enc)
+def resolve_token() -> str:
+    login = get_current_login()
 
-    if settings.github_token:
-        return settings.github_token
+    if not login:
+        raise RuntimeError(
+            "No authenticated GitHub user"
+        )
 
-    raise RuntimeError(
-        "No GitHub token available. "
-        "Either authenticate via /auth/login or set GITHUB_TOKEN in .env"
-    )
+    with get_db() as db:
+        enc = get_encrypted_token(db, login)
+
+    if not enc:
+        raise RuntimeError(
+            f"GitHub account '{login}' not authenticated"
+        )
+
+    return decrypt_token(enc)

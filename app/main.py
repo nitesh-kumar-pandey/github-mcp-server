@@ -223,6 +223,16 @@ def tables():
         "tables": inspector.get_table_names()
     }
     
+from app.database import Base
+
+@api.get("/models")
+def models():
+    return {
+        "models": list(Base.metadata.tables.keys())
+    }
+    
+    
+
 @api.get("/mcp-info")
 def mcp_info():
     return {

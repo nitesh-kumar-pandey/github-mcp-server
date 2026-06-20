@@ -275,18 +275,18 @@ def get_api_keys(session_token: Optional[str] = Cookie(default=None)):
     with get_db() as db:
         keys = list_api_keys(db, current_login)
 
-    return {
-        "keys": [
-            {
-                "id": k.id,
-                "prefix": k.key_prefix,
-                "name": k.name,
-                "created_at": k.created_at.isoformat(),
-                "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None,
-            }
-            for k in keys
-        ]
-    }
+        return {
+            "keys": [
+                {
+                    "id": k.id,
+                    "prefix": k.key_prefix,
+                    "name": k.name,
+                    "created_at": k.created_at.isoformat(),
+                    "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None,
+                }
+                for k in keys
+            ]
+        }
 
 
 @router.delete("/api-keys/{key_id}", summary="Revoke an API key")

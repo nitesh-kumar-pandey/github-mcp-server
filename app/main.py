@@ -178,35 +178,7 @@ def on_startup():
 # ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
-from app.database import create_tables
 
-@api.get("/create-tables")
-def create_tables_endpoint():
-    create_tables()
-    return {"status": "tables created"}
-
-
-
-
-
-from sqlalchemy import text
-from app.database import engine
-
-
-@api.get("/db-test")
-def db_test():
-    try:
-        with engine.connect() as conn:
-            result = conn.execute(text("SELECT 1"))
-            return {
-                "database": "connected",
-                "result": result.scalar()
-            }
-    except Exception as e:
-        return {
-            "database": "failed",
-            "error": str(e)
-        }
 @api.get("/")
 @limiter.limit("60/minute")
 def root(request: Request):
@@ -223,34 +195,7 @@ def root(request: Request):
 @api.get("/health")
 def health():
     return {"status": "ok", "version": settings.mcp_server_version}
-
-from sqlalchemy import inspect
-from app.database import engine
-
-@api.get("/tables")
-def tables():
-    inspector = inspect(engine)
-    return {
-        "tables": inspector.get_table_names()
-    }
     
-from app.database import Base
-
-@api.get("/models")
-def models():
-    return {
-        "models": list(Base.metadata.tables.keys())
-    }
-    
-@api.get("/token-count")
-def token_count():
-    from app.database import SessionLocal, TokenStore
-
-    db = SessionLocal()
-    try:
-        return {"count": db.query(TokenStore).count()}
-    finally:
-        db.close() 
 
 @api.get("/mcp-info")
 def mcp_info():

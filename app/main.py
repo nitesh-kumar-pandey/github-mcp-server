@@ -188,6 +188,7 @@ def create_tables_endpoint():
 
 
 
+
 from sqlalchemy import text
 from app.database import engine
 

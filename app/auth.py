@@ -321,6 +321,18 @@ def debug_api_key(key: str):
             "login": record.github_login,
             "prefix": record.key_prefix,
         }
+        
+@router.get("/debug-auth")
+def debug_auth(request: Request):
+    return {
+        "authorization": request.headers.get("Authorization"),
+        "x_api_key": request.headers.get("X-API-Key"),
+    }
+    
+@router.get("/auth-test")
+def auth_test(request: Request):
+    login = resolve_login_from_request(request)
+    return {"login": login}
 
 # ---------------------------------------------------------------------------
 # Token resolution helper (used by tools.py)

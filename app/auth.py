@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Request, Cookie
 from fastapi.responses import RedirectResponse, JSONResponse
 from typing import Optional
-
+from app.database import ApiKey, get_db
 from app.config import get_settings
 from app.database import (
     get_db, upsert_token, get_encrypted_token,
@@ -301,6 +301,26 @@ def delete_api_key(key_id: int, session_token: Optional[str] = Cookie(default=No
         raise HTTPException(status_code=404, detail="API key not found")
     return {"status": "revoked", "id": key_id}
 
+
+@router.get("/debug-api-key")
+def debug_api_key(key: str):
+    with get_db() as db:
+        key_hash = hash_api_key(key)
+
+        record = (
+            db.query(ApiKey)
+            .filter_by(key_hash=key_hash, revoked=False)
+            .first()
+        )
+
+        if not record:
+            return {"found": False}
+
+        return {
+            "found": True,
+            "login": record.github_login,
+            "prefix": record.key_prefix,
+        }
 
 # ---------------------------------------------------------------------------
 # Token resolution helper (used by tools.py)

@@ -242,7 +242,15 @@ def models():
         "models": list(Base.metadata.tables.keys())
     }
     
-    
+@api.get("/token-count")
+def token_count():
+    from app.database import SessionLocal, TokenStore
+
+    db = SessionLocal()
+    try:
+        return {"count": db.query(TokenStore).count()}
+    finally:
+        db.close() 
 
 @api.get("/mcp-info")
 def mcp_info():

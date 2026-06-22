@@ -395,3 +395,25 @@ def debug_token(login: str):
                 "token_exists": False,
                 "error": str(e)
             }
+            
+@router.get("/debug-github")
+def debug_github(login: str):
+    from app.auth import get_user_token
+    from app.database import get_db
+    import requests
+
+    with get_db() as db:
+        token = get_user_token(db, login)
+
+    r = requests.get(
+        "https://api.github.com/user",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json"
+        }
+    )
+
+    return {
+        "status": r.status_code,
+        "body": r.text[:1000]
+    }

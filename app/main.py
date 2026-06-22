@@ -261,19 +261,3 @@ if __name__ == "__main__":
         run_http()
 
 
-@router.get("/debug-github")
-def debug_github(login: str):
-    with get_db() as db:
-        token = get_user_token(db, login)
-
-    import requests
-
-    r = requests.get(
-        "https://api.github.com/user",
-        headers={"Authorization": f"Bearer {token}"}
-    )
-
-    return {
-        "status": r.status_code,
-        "body": r.text[:500]
-    }

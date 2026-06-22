@@ -373,3 +373,25 @@ def resolve_token(login: str | None = None) -> str:
         "No GitHub token available. Authenticate via /auth/login, "
         "pass a personal API key, or set GITHUB_TOKEN in .env"
     )
+@router.get("/debug-token")
+def debug_token(login: str):
+    from app.database import get_db
+    from app.auth import get_user_token
+
+    with get_db() as db:
+        try:
+            token = get_user_token(db, login)
+
+            return {
+                "login": login,
+                "token_exists": True,
+                "token_length": len(token),
+                "token_prefix": token[:10]
+            }
+
+        except Exception as e:
+            return {
+                "login": login,
+                "token_exists": False,
+                "error": str(e)
+            }

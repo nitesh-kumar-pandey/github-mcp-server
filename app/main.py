@@ -123,18 +123,34 @@ async def log_requests(request: Request, call_next):
 @api.middleware("http")
 async def mcp_key_middleware(request: Request, call_next):
     if request.url.path == "/mcp" or request.url.path.startswith("/mcp/"):
+
+        print(
+            f"MCP AUTH HEADER: {request.headers.get('Authorization')}",
+            flush=True
+        )
+
         try:
-            login = verify_mcp_request(request)  # raises HTTPException(401) if invalid
+            login = verify_mcp_request(request)
         except Exception as exc:
             status = getattr(exc, "status_code", 401)
             detail = getattr(exc, "detail", str(exc))
-            return JSONResponse(status_code=status, content={"detail": detail})
 
-        set_current_login(login)  # may be None if only the shared key was used
+            print(f"MCP AUTH FAILED: {detail}", flush=True)
+
+            return JSONResponse(
+                status_code=status,
+                content={"detail": detail}
+            )
+
+        print(f"MCP LOGIN: {login}", flush=True)
+
+        set_current_login(login)
+
         try:
             response = await call_next(request)
         finally:
             clear_current_login()
+
         return response
 
     return await call_next(request)
@@ -220,6 +236,7 @@ async def list_tools():
         return {"error": str(e)}
 
 
+
 # ---------------------------------------------------------------------------
 # Entry points
 # ---------------------------------------------------------------------------
@@ -242,3 +259,21 @@ if __name__ == "__main__":
         run_mcp_stdio()
     else:
         run_http()
+
+
+@router.get("/debug-github")
+def debug_github(login: str):
+    with get_db() as db:
+        token = get_user_token(db, login)
+
+    import requests
+
+    r = requests.get(
+        "https://api.github.com/user",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+
+    return {
+        "status": r.status_code,
+        "body": r.text[:500]
+    }

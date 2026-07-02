@@ -28,6 +28,8 @@ from app.database import create_tables
 from app.auth import router as auth_router, verify_mcp_request
 from app.tools import mcp
 from app.user_context import set_current_login, clear_current_login
+from app.oauth_discovery import router as oauth_discovery_router
+
 
 settings = get_settings()
 
@@ -161,6 +163,7 @@ async def mcp_key_middleware(request: Request, call_next):
 # ---------------------------------------------------------------------------
 
 api.include_router(auth_router)
+api.include_router(oauth_discovery_router)
 
 # ---------------------------------------------------------------------------
 # Mount MCP

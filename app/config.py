@@ -12,8 +12,9 @@ class Settings(BaseSettings):
     github_token: str = ""  # PAT for dev / fallback
 
     # OAuth
-    oauth_redirect_uri: str = "https://github-mcp-server-1-hglr.onrender.com/auth/callback"
-
+    oauth_redirect_uri: str = "https://github-mcp-server-2.onrender.com/auth/callback"
+    
+    public_base_url: str = "https://github-mcp-server-2.onrender.com"
     # App
     app_secret_key: str = "change-me-in-production"
     app_env: str = "development"

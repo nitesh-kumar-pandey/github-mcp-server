@@ -117,11 +117,66 @@ class AuditLog(Base):
     success = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+class OAuthRequest(Base):
+    __tablename__ = "oauth_requests"
+
+    id = Column(Integer, primary_key=True)
+
+    request_id = Column(String, unique=True, index=True)
+
+    client_id = Column(String)
+
+    redirect_uri = Column(String)
+
+    state = Column(String)
+
+    code_challenge = Column(String)
+
+    code_challenge_method = Column(String)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+def save_oauth_request(
+    db,
+    request_id,
+    client_id,
+    redirect_uri,
+    state,
+    code_challenge,
+    method
+):
+    obj = OAuthRequest(
+        request_id=request_id,
+        client_id=client_id,
+        redirect_uri=redirect_uri,
+        state=state,
+        code_challenge=code_challenge,
+        code_challenge_method=method,
+    )
 
+    db.add(obj)
+    db.commit()
+
+
+def get_oauth_request(db, request_id):
+    return (
+        db.query(OAuthRequest)
+        .filter_by(request_id=request_id)
+        .first()
+    )
+
+
+def delete_oauth_request(db, request_id):
+    db.query(OAuthRequest).filter_by(
+        request_id=request_id
+    ).delete()
+
+    db.commit()
+    
+    
 def create_tables() -> None:
     """Create all tables (idempotent)."""
     Base.metadata.create_all(bind=engine)

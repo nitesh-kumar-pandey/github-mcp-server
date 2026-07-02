@@ -15,7 +15,7 @@ from __future__ import annotations
 import sys
 import time
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -264,3 +264,38 @@ if __name__ == "__main__":
         run_http()
 
 
+import secrets
+from fastapi.responses import RedirectResponse
+
+from app.database import get_db, save_oauth_request
+@api.get("/authorize")
+def authorize(
+    client_id: str,
+    redirect_uri: str,
+    response_type: str,
+    state: str,
+    code_challenge: str,
+    code_challenge_method: str = "S256",
+):
+    if response_type != "code":
+        raise HTTPException(
+            status_code=400,
+            detail="Only authorization_code is supported"
+        )
+
+    request_id = secrets.token_urlsafe(32)
+
+    with get_db() as db:
+        save_oauth_request(
+            db=db,
+            request_id=request_id,
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            state=state,
+            code_challenge=code_challenge,
+            method=code_challenge_method,
+        )
+
+    return RedirectResponse(
+        url=f"/auth/login?oauth_request={request_id}"
+    )
